@@ -1,12 +1,5 @@
-#
-# This is a Shiny web application. You can run the application by clicking
-# the 'Run App' button above.
-#
-# Find out more about building applications with Shiny here:
-#
-#    http://shiny.rstudio.com/
-#
 
+# Load Libraries
 library(shiny)
 library(shinydashboard)
 source("global.R")
@@ -31,14 +24,14 @@ ui <- dashboardPage(title = "EffVisR",
                         radioButtons(
                             inputId = "datafrom",
                             label = "Data Source:",
-                            choices = c("Spreadsheet", "Database"),
-                            selected = "Spreadsheet"
+                            choices = c("Database","Spreadsheet"),
+                            selected = "Database"
                         ),
                         hr(),
-                        conditionalPanel(
-                            condition = "input.datafrom=='Database'",
-                            uiOutput("DBstudies")
-                        ),
+                        # conditionalPanel(
+                        #     condition = "input.datafrom=='Database'",
+                        #     uiOutput("DBstudies")
+                        # ),
                         conditionalPanel(
                             condition = "input.datafrom=='Spreadsheet'",
                             fileInput(
@@ -74,6 +67,13 @@ ui <- dashboardPage(title = "EffVisR",
                         )
                     ),
                     mainPanel(width = 9,
+                        conditionalPanel(
+                                  condition = "input.datafrom=='Database'",
+                                  #textOutput("DBselection"),
+                                  reactableOutput("study_table")
+                              ),
+                        conditionalPanel(
+                                  condition = "input.datafrom=='Spreadsheet'",
                         h4("Review Study Info, Design and Data"),
                         tabBox(
                             width = 12,
@@ -122,6 +122,7 @@ ui <- dashboardPage(title = "EffVisR",
                                 dataTableOutput("preview_perk_msd")
                             )
                         )
+                    )
                     )
                 )),
         tabItem(
@@ -575,7 +576,6 @@ ui <- dashboardPage(title = "EffVisR",
                                  mainPanel(width=10,
                                            plotOutput("pERK_wb_plot"))
                              ))
-                    
                 )),
                 fluidRow(tabBox(
                     width=12,
@@ -602,15 +602,56 @@ ui <- dashboardPage(title = "EffVisR",
 # Define server logic
 server <- function(input, output) {
     
+    ### testing a reactive table of studies in database that is selectable by user
+    study_table <- reactive({
+        if (input$datafrom == "Database") {
+            db.con <- DBI::dbConnect(RSQLite::SQLite(), "Data/EffVisR-database-output.sqlite")
+            
+            tvbw_studies <- tbl(db.con, "tvbw") %>%
+                collect()
+            
+            DBI::dbDisconnect(db.con)
+            
+            study_table <- tvbw_studies %>%
+                mutate(`Inoculation Date` = as_date(`Inoculation Date`),
+                       `Dosing Date` = as_date(`Dosing Date`),
+                       `Invivo Study Ending Date` = as_date(`Invivo Study Ending Date`)) %>%
+                group_by(`Quotation No`, `Study ID`, `Tumor Cell Line`, Animal, Treatment, `Inoculation Date`, `Dosing Date`, `Invivo Study Ending Date`) %>%
+                slice(1) %>%
+                group_by(`Quotation No`, `Study ID`, `Tumor Cell Line`, Animal, `Inoculation Date`, `Dosing Date`, `Invivo Study Ending Date`) %>%
+                filter(!str_detect(Treatment,  "Vehicle")) %>%
+                summarise(Treatments = str_c(Treatment, collapse = "\n")) %>%
+                arrange(desc(`Invivo Study Ending Date`))
+        } else if (input$datafrom == "Spreadsheet") {}   
+    })
     
+    output$study_table <- renderReactable({
+        reactable(study_table(), 
+                  selection = "single", onClick = "select",
+                  filterable = TRUE, striped = TRUE, 
+                  compact = TRUE, highlight = TRUE, 
+                  columns = list(
+                      Treatments = colDef(width = 200)))
+        
+    })
+    
+    DBselected <- reactive(getReactableState("study_table", "selected"))
+    
+    output$DBselection <- renderPrint({
+        print(study_table()$`Quotation No`[DBselected()])})
+    
+    observe({print(study_table()$`Quotation No`[DBselected()])})
+    ###
+    
+    # read tvbw data from database
     tvbw <- reactive({
         if (input$datafrom == "Database") {
             db.con <-
                 DBI::dbConnect(RSQLite::SQLite(),
                                "Data/EffVisR-database-output.sqlite")
             data <- tbl(db.con, "tvbw") %>%
-                filter(`Quotation No` == local(input$DBselected)) %>%
                 collect() %>%
+                filter(`Quotation No` == study_table()$`Quotation No`[DBselected()]) %>%
                 mutate(Date=as_date(Date),
                        GroupNum = as.integer(str_extract(Group, "[0-9]{1,2}$")),
                        `Inoculation Date`=as_date(`Inoculation Date`),
@@ -764,11 +805,11 @@ server <- function(input, output) {
                 DBI::dbConnect(RSQLite::SQLite(),
                                "Data/EffVisR-database-output.sqlite")
             data <- tbl(db.con, "tvbw") %>%
-                filter(`Quotation No` == local(input$DBselected)) %>%
+                collect() %>%
+                filter(`Quotation No` == study_table()$`Quotation No`[DBselected()]) %>%
                 select(`Study ID`, `Quotation No`, `Tumor Cell Line`, `Injected Cell Numbers`, `Animal`, `Injected / Implanted position`, 
                        `Inoculation Date`, `Dosing Date`, `Invivo Study Ending Date`) %>%
                 distinct() %>%
-                collect() %>%
                 mutate(`Inoculation Date`=as_date(`Inoculation Date`),
                        `Dosing Date`=as_date(`Dosing Date`),
                        `Invivo Study Ending Date`=as_date(`Invivo Study Ending Date`))
@@ -801,11 +842,12 @@ server <- function(input, output) {
                 DBI::dbConnect(RSQLite::SQLite(),
                                "Data/EffVisR-database-output.sqlite")
             data <- tbl(db.con, "tvbw") %>%
-                filter(`Quotation No` == local(input$DBselected)) %>%
+                collect() %>%
+                filter(`Quotation No` == study_table()$`Quotation No`[DBselected()]) %>%
                 select(Group, Objectives, Treatment, Treatment_1, Dose_1, Volume_1, Route_1, Frequency_1, Formulation_1,
                        Treatment_2, Dose_2, Volume_2, Route_2, Frequency_2, Formulation_2) %>%
-                distinct() %>%
-                collect()
+                distinct()
+                
             
             DBI::dbDisconnect(db.con)
         } else if (input$datafrom == "Spreadsheet") {
@@ -839,8 +881,8 @@ server <- function(input, output) {
                 DBI::dbConnect(RSQLite::SQLite(),
                                "Data/EffVisR-database-output.sqlite")
             data <- tbl(db.con, "pk_efficacy") %>%
-                filter(`Quotation No` == local(input$DBselected)) %>% 
-                collect()
+                collect() %>%
+                filter(`Quotation No` == study_table()$`Quotation No`[DBselected()]) 
             DBI::dbDisconnect(db.con)
         } else if (input$datafrom == "Spreadsheet") {
             # read data from excel spreadsheet
@@ -868,8 +910,8 @@ server <- function(input, output) {
                 DBI::dbConnect(RSQLite::SQLite(),
                                "Data/EffVisR-database-output.sqlite")
             data <- tbl(db.con, "pkparams_efficacy") %>%
-                filter(`Quotation No` == local(input$DBselected)) %>% 
-                collect()
+                collect() %>%
+                filter(`Quotation No` == study_table()$`Quotation No`[DBselected()])
             DBI::dbDisconnect(db.con)
         } else if (input$datafrom == "Spreadsheet") {
             # read data from excel spreadsheet
@@ -891,8 +933,8 @@ server <- function(input, output) {
                 DBI::dbConnect(RSQLite::SQLite(),
                                "Data/EffVisR-database-output.sqlite")
             data <- tbl(db.con, "pk_pd") %>%
-                filter(`Quotation No` == local(input$DBselected)) %>% 
-                collect()
+                collect() %>%
+                filter(`Quotation No` == study_table()$`Quotation No`[DBselected()])
             DBI::dbDisconnect(db.con)
         } else if (input$datafrom == "Spreadsheet") {
             # read data from excel spreadsheet
@@ -921,8 +963,8 @@ server <- function(input, output) {
                 DBI::dbConnect(RSQLite::SQLite(),
                                "Data/EffVisR-database-output.sqlite")
             data <- tbl(db.con, "pkparams_pd") %>%
-                filter(`Quotation No` == local(input$DBselected)) %>% 
-                collect()
+                collect() %>%
+                filter(`Quotation No` == study_table()$`Quotation No`[DBselected()])
             DBI::dbDisconnect(db.con)
         } else if (input$datafrom == "Spreadsheet") {
             # read data from excel spreadsheet
@@ -944,8 +986,8 @@ server <- function(input, output) {
                 DBI::dbConnect(RSQLite::SQLite(),
                                "Data/EffVisR-database-output.sqlite")
             data <- tbl(db.con, "perk_wb") %>%
-                filter(`Quotation No` == local(input$DBselected)) %>% 
-                collect()
+                collect() %>%
+                filter(`Quotation No` == study_table()$`Quotation No`[DBselected()])
             DBI::dbDisconnect(db.con)
         } else if (input$datafrom == "Spreadsheet") {
             # read data from excel spreadsheet
@@ -976,8 +1018,8 @@ server <- function(input, output) {
                 DBI::dbConnect(RSQLite::SQLite(),
                                "Data/EffVisR-database-output.sqlite")
             data <- tbl(db.con, "perk_msd") %>%
-                filter(`Quotation No` == local(input$DBselected)) %>%
-                collect()
+                collect() %>%
+                filter(`Quotation No` == study_table()$`Quotation No`[DBselected()])
             DBI::dbDisconnect(db.con)
         } else if (input$datafrom == "Spreadsheet") {
             # read data from excel spreadsheet
@@ -1121,6 +1163,7 @@ server <- function(input, output) {
     
 
 # Submit data to sqlite database
+    
     observeEvent(input$Submit_tvbw, {
         db.con <-
             DBI::dbConnect(RSQLite::SQLite(),
@@ -1227,43 +1270,44 @@ server <- function(input, output) {
     })
     
 # Show user list of studies from database
-    output$DBstudies <- renderUI({
-        db.con <-
-            DBI::dbConnect(RSQLite::SQLite(),
-                           "Data/EffVisR-database-output.sqlite")
-        
-        EFFstudies<-tbl(db.con, "tvbw") %>%
-            select(`Quotation No`) %>%
-            distinct() %>%
-            collect()
-        
-        WBstudies<-tbl(db.con, "perk_wb") %>%
-            select(`Quotation No`) %>%
-            distinct() %>%
-            collect()
-        
-        MSDstudies<-tbl(db.con, "perk_msd") %>%
-            select(`Quotation No`) %>%
-            distinct() %>%
-            collect()
-        
-        DBStudies <- sort(unique(c(EFFstudies$`Quotation No`, WBstudies$`Quotation No`, MSDstudies$`Quotation No`)))
-        
-        selectInput(
-            label = "Select Studies:",
-            inputId = "DBselected",
-            choices = DBStudies,
-            selected = NULL,
-            multiple = FALSE
-        )
-        #DBI::dbDisconnect(db.con)
-    })
+    # output$DBstudies <- renderUI({
+    #     db.con <-
+    #         DBI::dbConnect(RSQLite::SQLite(),
+    #                        "Data/EffVisR-database-output.sqlite")
+    # 
+    #     EFFstudies<-tbl(db.con, "tvbw") %>%
+    #         select(`Quotation No`) %>%
+    #         distinct() %>%
+    #         collect()
+    # 
+    #     WBstudies<-tbl(db.con, "perk_wb") %>%
+    #         select(`Quotation No`) %>%
+    #         distinct() %>%
+    #         collect()
+    # 
+    #     MSDstudies<-tbl(db.con, "perk_msd") %>%
+    #         select(`Quotation No`) %>%
+    #         distinct() %>%
+    #         collect()
+    # 
+    #     DBStudies <- sort(unique(c(EFFstudies$`Quotation No`, WBstudies$`Quotation No`, MSDstudies$`Quotation No`)))
+    # 
+    #     selectInput(
+    #         label = "Select Studies:",
+    #         inputId = "DBselected",
+    #         choices = DBStudies,
+    #         selected = NULL,
+    #         multiple = FALSE
+    #     )
+    #     #DBI::dbDisconnect(db.con)
+    # })
+    
     
     output$SelectedStudy1 <- renderUI({
         if (input$datafrom=="Spreadsheet"){
             h4(paste("Study:", stinfo()$`Quotation No`, "Model:", stinfo()$`Tumor Cell Line`, "--loaded from Spreadsheet", sep="\t"))
         }else if(input$datafrom=="Database"){
-            h4(paste("Study:", input$DBselected, "Model:", stinfo()$`Tumor Cell Line`, "--loaded from Database", sep="   "))
+            h4(paste("Study:", study_table()$`Quotation No`[DBselected()], "Model:", stinfo()$`Tumor Cell Line`, "--loaded from Database", sep="   "))
         }
     })
     
@@ -1271,7 +1315,7 @@ server <- function(input, output) {
         if (input$datafrom=="Spreadsheet"){
             h4(paste("Study:", stinfo()$`Quotation No`, "Model:", stinfo()$`Tumor Cell Line`, "--loaded from Spreadsheet", sep="   "))
         }else if(input$datafrom=="Database"){
-            h4(paste("Study:", input$DBselected, "Model:", stinfo()$`Tumor Cell Line`, "--loaded from Database", sep="   "))
+            h4(paste("Study:", study_table()$`Quotation No`[DBselected()], "Model:", stinfo()$`Tumor Cell Line`, "--loaded from Database", sep="   "))
         }
     })
         
@@ -1279,7 +1323,7 @@ server <- function(input, output) {
         if (input$datafrom=="Spreadsheet"){
             h4(paste("Study:", stinfo()$`Quotation No`, "Model:", stinfo()$`Tumor Cell Line`, "--loaded from Spreadsheet", sep="   "))
         }else if(input$datafrom=="Database"){
-            h4(paste("Study:", input$DBselected, "Model:", stinfo()$`Tumor Cell Line`, "--loaded from Database", sep="   "))
+            h4(paste("Study:", study_table()$`Quotation No`[DBselected()], "Model:", stinfo()$`Tumor Cell Line`, "--loaded from Database", sep="   "))
         }
     })
 # Setup reactive user interface elements
@@ -1651,7 +1695,8 @@ server <- function(input, output) {
                                   ymax = max(TVBW.summary()$`TV Mean`, na.rm = TRUE)+max(TVBW.summary()$`TV SEM`, na.rm = TRUE))} +
             scale_x_continuous(breaks=unique(TVBW.summary()$`Days on Study Treatment`)) +
             theme_classic(base_size = 12) +
-            theme(axis.text = element_text(color="black"))
+            theme(axis.text = element_text(color="black"),
+                  legend.key.height = unit(0.85,"cm"))
             
         })
     
@@ -1702,7 +1747,11 @@ server <- function(input, output) {
                 ungroup() %>%
                 mutate("Group Number" = parse_double(str_extract(Group, "[0-9]{1,2}$")),
                        Treatment = paste(Group, Treatment, sep=": ")) %>%
-                mutate(Treatment_Syn = str_replace_all(Treatment, c("FT002787-12"="KIN002787", "FT000960-07"="LXH254", "FT000959-04"="Futi"))) %>%
+                mutate(Treatment_Syn = str_replace_all(Treatment, c("^FT002787"="KIN2787", 
+                                                                    "^FT000960"="LXH254", 
+                                                                    "FT000960-08"="LXH254", 
+                                                                    "FT000959-04"="Futi", 
+                                                                    "FT000953-03"="Bini"))) %>%
                 mutate(BatchID = fct_reorder(Treatment, `Group Number`)) %>%
                 mutate(Compound = fct_reorder(Treatment_Syn, `Group Number`)) %>%
             ggplot() +
@@ -1738,7 +1787,8 @@ server <- function(input, output) {
                                                                    max(TVBW.summary()$`TV SEM Percent Change`, na.rm = TRUE))} +
             scale_x_continuous(breaks=unique(TVBW.summary()$`Days on Study Treatment`)) +
             theme_classic(base_size = 12) +
-            theme(axis.text = element_text(color="black")) 
+            theme(axis.text = element_text(color="black"),
+                  legend.key.height = unit(0.85,"cm")) 
             
     })
     
@@ -1794,9 +1844,9 @@ server <- function(input, output) {
             mutate(Treatment = fct_reorder(Treatment, `Group Number`)) %>%
             mutate(Group = fct_reorder(Group, `Group Number`)) %>%
             mutate("Group Number" = parse_double(str_extract(Group, "[0-9]{1,2}$"))) %>%
-            mutate(Treatment_Syn = str_replace_all(Treatment, c("FT002787-12"="KIN002787", "FT000960-07"="LXH254"))) %>%
+            #mutate(Treatment_Syn = str_replace_all(Treatment, c("FT002787-12"="KIN002787", "FT000960-07"="LXH254"))) %>%
             mutate(BatchID = fct_reorder(Treatment, `Group Number`)) %>%
-            mutate(Compound = fct_reorder(Treatment_Syn, `Group Number`)) %>%
+            #mutate(Compound = fct_reorder(Treatment_Syn, `Group Number`)) %>%
             ungroup() %>%
             arrange(Treatment, desc(`TV % Change`)) %>%
             mutate(
@@ -1804,24 +1854,35 @@ server <- function(input, output) {
             ) %>%
             ggplot() +
             aes_string("`Animal ID`", "`TV % Change`", fill =
-                    input$WfallTxtNames) +
-            geom_col(color="black", size=0.3) +
+                    "Treatment") + # input$WfallTxtNames
+            geom_col(color="black", size=0.15, width = 0.8) +
+            facet_grid(.~Treatment, scales = "free_x", space = "free_x") +
             scale_color_manual(values=c25) +
             scale_fill_manual(values=c25) +
-            theme_classic(base_size = 12) +
-            geom_hline(yintercept = 0) +
-            geom_hline(yintercept = -30, lty=2) +
+            theme_minimal(base_size = 10) +
+            geom_hline(yintercept = 0, size = 0.3) +
+            geom_hline(yintercept = -30, lty=2, size=0.3) +
             ylab(paste(
                 "% Change in Tumor Volume on Day", input$wfallDay
             )) +
+            xlab("Individual Tumors") +
             labs(fill="Treatment", color="Treatment") +
-            theme(axis.text.x = element_blank(),
+            theme(legend.position = "none",
+                axis.text.x = element_blank(),
                   axis.ticks.x = element_blank(),
-                  axis.text.y=element_text(color="black"))
+                  axis.text.y=element_text(color="black"),
+                strip.text.x = element_text(face = "bold", size=8),
+                panel.grid.major.y = element_line(linetype = 1, size=rel(0.25), color="gray"),
+                panel.grid.minor.y = element_blank(),
+                panel.grid.minor.x = element_blank(),
+                panel.grid.major.x = element_blank(),
+                #panel.border = element_rect(color="black", fill=NA),
+                strip.background = element_blank(),
+                )
     )
     
     output$WfallPlot <- renderPlot({
-        WfallPlot()
+        WfallPlot() 
     })
     
     tgiPlot <- reactive(
@@ -1844,7 +1905,8 @@ server <- function(input, output) {
             geom_hline(yintercept = 0) +
             theme(axis.text.x = element_text(color="black"),
                   axis.ticks.x = element_blank(),
-                  axis.text.y=element_text(color="black"))
+                  axis.text.y=element_text(color="black"),
+                  legend.key.height = unit(0.85,"cm"))
     )
     
     output$tgiPlot <- renderPlot({
@@ -1866,7 +1928,8 @@ server <- function(input, output) {
             theme_bw(base_size = 12) +
             facet_grid(`Days on Study Treatment`~`Batch ID`, scales = "free") +
             theme(axis.text.x=element_text(angle=45, hjust=1, vjust=1, color="black"), 
-                  strip.text = element_text(face="bold"))
+                  strip.text = element_text(face="bold"),
+                  legend.key.height = unit(0.85,"cm"))
     )
     
     output$tgiAucPlot <- renderPlot({
@@ -1900,7 +1963,8 @@ server <- function(input, output) {
             ylab("Mean Body Weight (g) +/- SEM") +
             scale_x_continuous(breaks=unique(TVBW.summary()$`Days on Study Treatment`)) +
             theme_classic(base_size = 12) +
-            theme(axis.text = element_text(color="black"))
+            theme(axis.text = element_text(color="black"),
+                  legend.key.height = unit(0.85,"cm"))
     )
     
     output$BWsumPlot <- renderPlot({
@@ -2034,7 +2098,8 @@ server <- function(input, output) {
             ylab("Average % Body Weight Change") +
             scale_x_continuous(breaks=unique(TVBW.summary()$`Days on Study Treatment`)) +
             theme_classic(base_size = 12) +
-            theme(axis.text = element_text(color="black"))
+            theme(axis.text = element_text(color="black"),
+                  legend.key.height = unit(0.85,"cm"))
         
     })
     
@@ -2154,7 +2219,8 @@ server <- function(input, output) {
             facet_wrap(. ~ Treatment, nrow = input$BWpctPlot.rows) +
             theme(strip.text = element_text(face = "bold", size=8),
                   axis.text=element_text(color="black"),
-                  legend.position = "none")
+                  legend.position = "none",
+                  panel.grid.minor = element_blank())
     )
     
     output$BWpctPlot <- renderPlot({
@@ -2349,7 +2415,7 @@ server <- function(input, output) {
                 setEPS()
                 postscript(file, width = input$TVanimalPlot.width, height=input$TVanimalPlot.height)
             }
-            print(TVanimalPlot())
+            print(TVanimalPlot()+ theme(strip.text.x = element_text(face="bold",size=4)))
             dev.off()
         },
         contentType="image/png"
@@ -2389,7 +2455,7 @@ server <- function(input, output) {
                 setEPS()
                 postscript(file, width = input$BWanimalPlot.width, height=input$BWanimalPlot.height)
             }
-            print(BWanimalPlot())
+            print(BWanimalPlot()+ theme(strip.text.x = element_text(face="bold",size=4)))
             dev.off()
         },
         contentType="image/png"
@@ -2429,7 +2495,7 @@ server <- function(input, output) {
                 setEPS()
                 postscript(file, width = input$WfallPlot.width, height=input$WfallPlot.height)
             }
-            print(WfallPlot())
+            print(WfallPlot()+ theme(strip.text.x = element_text(face="bold",size=4)))
             dev.off()
         },
         contentType="image/png"
@@ -2489,7 +2555,7 @@ server <- function(input, output) {
                 setEPS()
                 postscript(file, width = input$TVpctPlot.width, height=input$TVpctPlot.height)
             }
-            print(TVpctPlot())
+            print(TVpctPlot()+ theme(strip.text.x = element_text(face="bold",size=4)))
             dev.off()
         },
         contentType="image/png"
@@ -2510,7 +2576,7 @@ server <- function(input, output) {
                 setEPS()
                 postscript(file, width = input$BWpctPlot.width, height=input$BWpctPlot.height)
             }
-            print(BWpctPlot())
+            print(BWpctPlot()+ theme(strip.text.x = element_text(face="bold",size=4)))
             dev.off()
         },
         contentType="image/png"
@@ -2530,7 +2596,7 @@ server <- function(input, output) {
                 setEPS()
                 postscript(file, width = input$BWgrpPctPlot.width, height=input$BWgrpPctPlot.height)
             }
-            print(BWgrpPctPlot())
+            print(BWgrpPctPlot()+ theme(strip.text.x = element_text(face="bold",size=4)))
             dev.off()
         },
         contentType="image/png"
