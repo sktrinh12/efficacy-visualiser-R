@@ -7,32 +7,6 @@ Efficacy Data Visualizer
 - get all studies from sqlite3 db and transfer to oracle 
 - efficacy data: tumour volume, weights
 
-#### SQL select statement to get row count
-```
-select count(*) nrows 
-from perk_msd t1
-union all 
-select count(*) nrows 
-from pk_efficacy t2
-union all 
-select count(*) nrows 
-from pk_pd t3
-union all 
-select count(*) nrows
-from pkparams_pd t4
-union all 
-select count(*) nrows
-from perk_wb t5
-union all 
-select count(*) nrows
-from pk_efficacy_2 t6
-union all 
-select count(*) nrows 
-from pkparams_efficacy t7
-union all 
-select count(*) nrows 
-from tvbw t7
-```
 
 ### sqlite db info
 
@@ -296,9 +270,3 @@ from tvbw t7
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 |PH-KIN04-IVP-2030|PH-ON-KIN-BxPC-3-06132020|BxPC-3|G1|Vehicle_1 & Vehicle_2|20|22.8|10.4|7.79|315.55732||18486.0|1.0|24.0|0.0|0.0|Efficacy Safety PK|Vehicle_1||5 uL/g|PO|QD|14.0|0.5%MC/0.1 % Tween80|Vehicle_2||5 uL/g|PO|QD|14.0|1%MC/0.5 % Tween80|5x10^6 in 100ul of 1:1 medium/Matrigel|Balb/c nude♀ 6-8w AKYB|Subcutaneous|18463.0|18486.0|18500.0|
 
-#### mapping
-
-- `Quotation No.` == `study_id` from `FT_PHARM_STUDY`
-- `Inoculation Date` == `DATE_COMPOUND_RECEIVED`
-- `Dosing date` == `DATE_IN_LIFE_INITIATED` 
-- `Invivo Study Ending Date` == `DATE_REPORTED`
